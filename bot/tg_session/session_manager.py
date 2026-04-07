@@ -1,128 +1,86 @@
 # bot/tg_session/session_manager.py
 
 import os
-import asyncio
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors import (
-    SessionPasswordNeededError,
-    PhoneCodeInvalidError,
-    PhoneCodeExpiredError
-)
 
 from ..config import Config
 
-SESSION_FILE = "tg_session.txt"
+SESSION_DIR = "bot/sessions"
 
 
 class SessionManager:
 
     def __init__(self):
-        self.client = None
-        self.phone = None
+        self.clients = {}
+        os.makedirs(SESSION_DIR, exist_ok=True)
 
-    # ================= START SESSION =================
+    # ================= START / LOAD SESSION =================
 
-    async def start(self):
-        """Start existing session"""
-        if not os.path.exists(SESSION_FILE):
-            return False
+    async def start(self, user_id: int):
+
+        session_file = f"{SESSION_DIR}/{user_id}.txt"
+
+        if not os.path.exists(session_file):
+            return None
+
+        # Return cached client
+        if user_id in self.clients:
+            return self.clients[user_id]
 
         try:
-            with open(SESSION_FILE, "r") as f:
-                session = f.read().strip()
+            with open(session_file, "r") as f:
+                session_str = f.read().strip()
 
-            if not session:
-                return False
+            if not session_str:
+                return None
 
-            self.client = TelegramClient(
-                StringSession(session),
+            client = TelegramClient(
+                StringSession(session_str),
                 Config.API_ID,
                 Config.API_HASH
             )
 
-            await self.client.start()
-            return True
+            await client.start()
+
+            self.clients[user_id] = client
+            return client
 
         except Exception:
-            return False
+            return None
 
-    # ================= LOGIN =================
+    # ================= SAVE SESSION =================
 
-    async def login(self, phone: str):
-        """Send OTP"""
-        self.phone = phone
+    async def save(self, user_id: int, session_str: str):
 
-        if self.client:
-            await self.client.disconnect()
+        session_file = f"{SESSION_DIR}/{user_id}.txt"
 
-        self.client = TelegramClient(
-            StringSession(),
-            Config.API_ID,
-            Config.API_HASH
-        )
-
-        await self.client.connect()
-
-        try:
-            await self.client.send_code_request(phone)
-            return True
-
-        except Exception as e:
-            raise Exception(f"Failed to send OTP: {e}")
-
-    # ================= VERIFY OTP =================
-
-    async def verify(self, code: str):
-        """Verify OTP and save session"""
-
-        if not self.client or not self.phone:
-            raise Exception("Login not initiated")
-
-        try:
-            await self.client.sign_in(self.phone, code)
-
-        except PhoneCodeInvalidError:
-            raise Exception("Invalid OTP")
-
-        except PhoneCodeExpiredError:
-            raise Exception("OTP expired")
-
-        except SessionPasswordNeededError:
-            raise Exception("2FA enabled. Not supported yet")
-
-        # Save session
-        session_str = self.client.session.save()
-
-        with open(SESSION_FILE, "w") as f:
-            f.write(session_str)
+        with open(session_file, "w") as f:
+            f.write(session_str.strip())
 
         return True
 
-    # ================= GET CLIENT =================
+    # ================= CHECK SESSION =================
 
-    async def get_client(self):
-        """Ensure client is ready"""
-        if self.client:
-            return self.client
+    def has_session(self, user_id: int):
 
-        started = await self.start()
-        if not started:
-            return None
-
-        return self.client
+        session_file = f"{SESSION_DIR}/{user_id}.txt"
+        return os.path.exists(session_file)
 
     # ================= LOGOUT =================
 
-    async def logout(self):
-        """Delete session"""
-        if self.client:
-            await self.client.disconnect()
+    async def logout(self, user_id: int):
 
-        if os.path.exists(SESSION_FILE):
-            os.remove(SESSION_FILE)
+        session_file = f"{SESSION_DIR}/{user_id}.txt"
 
-        self.client = None
-        self.phone = None
+        if user_id in self.clients:
+            try:
+                await self.clients[user_id].disconnect()
+            except:
+                pass
+            del self.clients[user_id]
+
+        if os.path.exists(session_file):
+            os.remove(session_file)
 
         return True
