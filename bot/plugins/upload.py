@@ -1,3 +1,5 @@
+# bot/plugins/upload.py
+
 from pyrogram import StopTransmission, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 
@@ -13,12 +15,14 @@ from typing import Tuple, Union
 from ..translations import Messages as tr
 from ..helpers.downloader import Downloader
 from ..helpers.uploader import Uploader
-from ..services.smart_fetch import smart_fetch   # ✅ ONLY THIS
+from ..services.smart_fetch import smart_fetch
+from ..tg_session.session_manager import SessionManager   # ✅ NEW
 from ..config import Config
 from ..utubebot import UtubeBot
 
 
 log = logging.getLogger(__name__)
+session = SessionManager()   # ✅ NEW
 
 
 # ================= MAIN HANDLER =================
@@ -109,11 +113,14 @@ async def handle_link_upload(c, m, link, title_args_start):
         await m.reply_text(tr.DAILY_QOUTA_REACHED)
         return
 
+    user_id = m.from_user.id   # ✅ IMPORTANT
+
     snt = await m.reply_text("📥 Fetching video...")
     c.counter += 1
 
     try:
-        file = await smart_fetch(link)
+        # ✅ UPDATED CALL
+        file = await smart_fetch(link, user_id)
 
         await snt.edit_text("📤 Uploading to YouTube...")
 
@@ -136,11 +143,15 @@ async def handle_link_upload(c, m, link, title_args_start):
 
         err = str(e)
 
+        # ✅ SMART ERROR HANDLING
         if "LOGIN_REQUIRED" in err:
+
             await snt.edit_text(
                 "🔐 Private channel detected!\n\n"
-                "Login required to access this video.\n\n"
-                "👉 /tg_login PHONE_NUMBER"
+                "To access this video, add your Telegram session:\n\n"
+                "👉 /add_session YOUR_SESSION_STRING\n\n"
+                "📌 You can generate session using:\n"
+                "👉 @StringSessionBot"
             )
 
         elif "No media" in err:
