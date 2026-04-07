@@ -13,14 +13,15 @@ from typing import Tuple, Union
 from ..translations import Messages as tr
 from ..helpers.downloader import Downloader
 from ..helpers.uploader import Uploader
-from ..services.fetch_service import fetch_video_from_link
-from ..services.smart_fetch import smart_fetch   # ✅ NEW
+from ..services.smart_fetch import smart_fetch   # ✅ ONLY THIS
 from ..config import Config
 from ..utubebot import UtubeBot
 
 
 log = logging.getLogger(__name__)
 
+
+# ================= MAIN HANDLER =================
 
 @UtubeBot.on_message(
     filters.private
@@ -34,97 +35,21 @@ async def _upload(c: UtubeBot, m: Message):
         await m.reply_text(tr.NOT_AUTHENTICATED_MSG)
         return
 
-    # =========================================================
-    # ✅ CASE 1: TELEGRAM LINK IN COMMAND
-    # =========================================================
+    # ✅ CASE 1: LINK IN COMMAND
     if len(m.command) > 1 and "t.me/" in m.command[1]:
-        link = m.command[1]
-
-        if c.counter >= 6:
-            await m.reply_text(tr.DAILY_QOUTA_REACHED)
-            return
-
-        snt = await m.reply_text("📥 Fetching video from Telegram link...")
-        c.counter += 1
-
-        try:
-            # ✅ SMART FETCH (AUTO PUBLIC + PRIVATE)
-            file = await smart_fetch(link)
-
-            await snt.edit_text("📤 Uploading to YouTube...")
-
-            title = " ".join(m.command[2:]) if len(m.command) > 2 else "Uploaded via Bot"
-
-            upload = Uploader(file, title)
-            status, yt_link = await upload.start(progress, snt)
-
-            if not status:
-                c.counter = max(0, c.counter - 1)
-
-            await snt.edit_text(yt_link, parse_mode=enums.ParseMode.HTML)
-
-        except Exception as e:
-            c.counter = max(0, c.counter - 1)
-
-            if "LOGIN_REQUIRED" in str(e):
-                await snt.edit_text(
-                    "🔐 Private content detected!\n\n"
-                    "Please login your Telegram account:\n"
-                    "/tg_login PHONE_NUMBER"
-                )
-            else:
-                await snt.edit_text(f"❌ Error:\n{e}")
-
+        await handle_link_upload(c, m, m.command[1], title_args_start=2)
         return
 
-    # =========================================================
-    # ✅ CASE 1.5: TELEGRAM LINK VIA REPLY (NEW 🔥)
-    # =========================================================
+    # ✅ CASE 1.5: LINK VIA REPLY
     if m.reply_to_message and m.reply_to_message.text:
         text = m.reply_to_message.text
 
         if "t.me/" in text:
-            link = text.strip()
-
-            if c.counter >= 6:
-                await m.reply_text(tr.DAILY_QOUTA_REACHED)
-                return
-
-            snt = await m.reply_text("📥 Fetching video...")
-            c.counter += 1
-
-            try:
-                file = await smart_fetch(link)
-
-                await snt.edit_text("📤 Uploading to YouTube...")
-
-                title = " ".join(m.command[1:]) if len(m.command) > 1 else "Uploaded via Bot"
-
-                upload = Uploader(file, title)
-                status, yt_link = await upload.start(progress, snt)
-
-                if not status:
-                    c.counter = max(0, c.counter - 1)
-
-                await snt.edit_text(yt_link, parse_mode=enums.ParseMode.HTML)
-
-            except Exception as e:
-                c.counter = max(0, c.counter - 1)
-
-                if "LOGIN_REQUIRED" in str(e):
-                    await snt.edit_text(
-                        "🔐 Private content detected!\n\n"
-                        "Please login your Telegram account:\n"
-                        "/tg_login PHONE_NUMBER"
-                    )
-                else:
-                    await snt.edit_text(f"❌ Error:\n{e}")
-
+            await handle_link_upload(c, m, text.strip(), title_args_start=1)
             return
 
-    # =========================================================
-    # ✅ CASE 2: REPLY MEDIA (OLD SYSTEM - UNTOUCHED)
-    # =========================================================
+    # ================= OLD SYSTEM (UNCHANGED) =================
+
     if not m.reply_to_message:
         await m.reply_text(tr.NOT_A_REPLY_MSG)
         return
@@ -170,22 +95,69 @@ async def _upload(c: UtubeBot, m: Message):
     upload = Uploader(file, title)
     status, yt_link = await upload.start(progress, snt)
 
-    log.debug(f"{status}, {yt_link}")
-
     if not status:
         c.counter = max(0, c.counter - 1)
 
+    await safe_edit(snt, yt_link)
+
+
+# ================= NEW LINK HANDLER =================
+
+async def handle_link_upload(c, m, link, title_args_start):
+
+    if c.counter >= 6:
+        await m.reply_text(tr.DAILY_QOUTA_REACHED)
+        return
+
+    snt = await m.reply_text("📥 Fetching video...")
+    c.counter += 1
+
     try:
-        await snt.edit_text(
-            text=yt_link,
-            parse_mode=enums.ParseMode.HTML
+        file = await smart_fetch(link)
+
+        await snt.edit_text("📤 Uploading to YouTube...")
+
+        title = (
+            " ".join(m.command[title_args_start:])
+            if len(m.command) > title_args_start
+            else "Uploaded via Bot"
         )
+
+        upload = Uploader(file, title)
+        status, yt_link = await upload.start(progress, snt)
+
+        if not status:
+            c.counter = max(0, c.counter - 1)
+
+        await safe_edit(snt, yt_link)
+
     except Exception as e:
-        log.warning(f"Final message failed: {e}")
-        await snt.edit_text(text=str(yt_link))
+        c.counter = max(0, c.counter - 1)
+
+        err = str(e)
+
+        if "LOGIN_REQUIRED" in err:
+            await snt.edit_text(
+                "🔐 Private channel detected!\n\n"
+                "Login required to access this video.\n\n"
+                "👉 /tg_login PHONE_NUMBER"
+            )
+
+        elif "No media" in err:
+            await snt.edit_text("❌ No video found in that message.")
+
+        else:
+            await snt.edit_text(f"❌ Error:\n{err}")
 
 
 # ================= HELPERS =================
+
+async def safe_edit(msg, text):
+    try:
+        await msg.edit_text(text, parse_mode=enums.ParseMode.HTML)
+    except Exception:
+        await msg.edit_text(str(text))
+
 
 def get_download_id(storage: dict) -> str:
     while True:
@@ -203,9 +175,7 @@ def valid_media(media: Message) -> bool:
     )
 
 
-def human_bytes(
-    num: Union[int, float], split: bool = False
-) -> Union[str, Tuple[int, str]]:
+def human_bytes(num: Union[int, float], split: bool = False):
     base = 1024.0
     sufix_list = ["B", "KB", "MB", "GB", "TB"]
 
@@ -215,15 +185,7 @@ def human_bytes(
         num /= base
 
 
-async def progress(
-    cur: Union[int, float],
-    tot: Union[int, float],
-    start_time: float,
-    status: str,
-    snt: Message,
-    c: UtubeBot,
-    download_id: str,
-):
+async def progress(cur, tot, start_time, status, snt, c, download_id):
     if not c.download_controller.get(download_id):
         raise StopTransmission
 
