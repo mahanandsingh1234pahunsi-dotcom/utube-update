@@ -1,6 +1,8 @@
 telethon==1.34.0
 pyrogram==2.0.106
 tgcrypto==1.2.5
+yt-dlp
+
 google-api-python-client==2.126.0
 google-auth==2.29.0
 google-auth-oauthlib==1.2.0
