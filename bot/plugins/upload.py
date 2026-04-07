@@ -13,6 +13,7 @@ from typing import Tuple, Union
 from ..translations import Messages as tr
 from ..helpers.downloader import Downloader
 from ..helpers.uploader import Uploader
+from ..services.fetch_service import fetch_video_from_link   # ✅ NEW
 from ..config import Config
 from ..utubebot import UtubeBot
 
@@ -32,6 +33,40 @@ async def _upload(c: UtubeBot, m: Message):
         await m.reply_text(tr.NOT_AUTHENTICATED_MSG)
         return
 
+    # ✅ CASE 1: TELEGRAM LINK PROVIDED
+    if len(m.command) > 1 and "t.me/" in m.command[1]:
+        link = m.command[1]
+
+        if c.counter >= 6:
+            await m.reply_text(tr.DAILY_QOUTA_REACHED)
+            return
+
+        snt = await m.reply_text("📥 Fetching video from Telegram link...")
+        c.counter += 1
+
+        try:
+            # 👤 fetch via userbot
+            file = await fetch_video_from_link(link)
+
+            await snt.edit_text("📤 Uploading to YouTube...")
+
+            title = " ".join(m.command[2:]) if len(m.command) > 2 else "Uploaded via Bot"
+
+            upload = Uploader(file, title)
+            status, link = await upload.start(progress, snt)
+
+            if not status:
+                c.counter = max(0, c.counter - 1)
+
+            await snt.edit_text(link, parse_mode=enums.ParseMode.HTML)
+
+        except Exception as e:
+            c.counter = max(0, c.counter - 1)
+            await snt.edit_text(f"❌ Error:\n{e}")
+
+        return
+
+    # ✅ CASE 2: REPLY MEDIA (OLD SYSTEM)
     if not m.reply_to_message:
         await m.reply_text(tr.NOT_A_REPLY_MSG)
         return
@@ -64,7 +99,7 @@ async def _upload(c: UtubeBot, m: Message):
 
     if not status:
         c.counter = max(0, c.counter - 1)
-        await snt.edit_text(text=file)   # ✅ removed markdown
+        await snt.edit_text(text=file)
         return
 
     try:
@@ -82,7 +117,6 @@ async def _upload(c: UtubeBot, m: Message):
     if not status:
         c.counter = max(0, c.counter - 1)
 
-    # ✅ FINAL FIX: use HTML instead of markdown
     try:
         await snt.edit_text(
             text=link,
@@ -92,6 +126,8 @@ async def _upload(c: UtubeBot, m: Message):
         log.warning(f"Final message failed: {e}")
         await snt.edit_text(text=str(link))
 
+
+# ================= HELPERS =================
 
 def get_download_id(storage: dict) -> str:
     while True:
